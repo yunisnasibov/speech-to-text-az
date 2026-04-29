@@ -42,72 +42,116 @@ print("Bütün modellər hazırdır!")
 def extract_teacher_name(transcript_segments):
     """Regex ilə müəllimin adını tapır — API key tələb etmir."""
     full_text = " ".join([seg["text"] for seg in transcript_segments])
+    # Whisper artefaktlarını təmizlə (nöqtə sözün ortasında/sonunda)
+    clean_text = re.sub(r'\.(?=\s+[A-ZƏÖÜŞÇĞİ])', '', full_text)  # "Yuniş. İbtar" → "Yuniş İbtar"
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
     
-    # Pattern 1: "Soyad Ad, Ata-adı oğlu/qızı"
+    print(f"Ad axtarışı mətni: {clean_text[:200]}")
+
+    # ═══════════════ Pattern 1: "Soyad Ad, Ata-adı oğlu/qızı" ═══════════════
+    # Məsələn: "Abbasov Rəhman, Mihman oğlu"
     oglu = re.search(
         r'([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s+([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s*[,.]?\s*[A-ZƏÖÜŞÇĞİa-zəöüşçğıi]+\s+o[gğ]lu',
-        full_text, re.IGNORECASE
+        clean_text, re.IGNORECASE
     )
     if oglu:
         return f"{oglu.group(2).title()} {oglu.group(1).title()}"
-    
+
     qizi = re.search(
         r'([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s+([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s*[,.]?\s*[A-ZƏÖÜŞÇĞİa-zəöüşçğıi]+\s+q[iıI]z[iıI]',
-        full_text, re.IGNORECASE
+        clean_text, re.IGNORECASE
     )
     if qizi:
         return f"{qizi.group(2).title()} {qizi.group(1).title()}"
 
-    # Pattern 2: "adım X deyil, adım Y"
+    # ═══════════════ Pattern 2: "adım X deyil, adım Y" ═══════════════
+    # Müəllim səhv deyilmiş adı düzəldir
     deyil = re.search(
-        r'ad[iıIİ]m\s+.+?deyil.+?ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]+(?:\s+[A-ZƏa-zə][a-zəöüşçğıi]+))',
-        full_text, re.IGNORECASE
+        r'ad[iıIİ]m\s+.{2,30}?deyil.{1,20}?ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]+(?:\s+[A-ZƏa-zə][a-zəöüşçğıi]+))',
+        clean_text, re.IGNORECASE
     )
     if deyil:
         return re.sub(r'[dD][iıİI][rR]$', '', deyil.group(1)).strip().title()
 
-    # Pattern 3: "mən ... yam, Ad Soyad"
+    # ═══════════════ Pattern 3: vergüldən sonra ad ═══════════════
+    # "... müəllimiyəm, Rəhman Abbasov" və ya "... sinifdir, adım Rəhman"
+    vergul = re.search(
+        r'[,.]\s*ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]{2,}(?:\s+[A-ZƏa-zə][a-zəöüşçğıi]{2,})?)',
+        clean_text, re.IGNORECASE
+    )
+    if vergul:
+        name = re.sub(r'[dD][iıİI][rR]$', '', vergul.group(1)).strip()
+        if len(name) > 3:
+            return name.title()
+
+    # ═══════════════ Pattern 4: "mən ... yam/yəm, Ad Soyad" ═══════════════
     self_ref = re.search(
-        r'm[eə]n\s+.+?[yY][eəaı]m\s*[,.]\s*([A-ZƏa-zə][a-zəöüşçğıi]+\s+[A-ZƏa-zə][a-zəöüşçğıi]+)',
-        full_text, re.IGNORECASE
+        r'm[eə]n\s+.{1,40}?[yY][eəaı]m\s*[,.]\s*([A-ZƏa-zə][a-zəöüşçğıi]{2,}\s+[A-ZƏa-zə][a-zəöüşçğıi]{2,})',
+        clean_text, re.IGNORECASE
     )
     if self_ref:
         return self_ref.group(1).strip().title()
 
-    # Pattern 4: "adım Ad Soyad"
+    # ═══════════════ Pattern 5: "adım Ad Soyad" ═══════════════
     adim = re.search(
-        r'ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]+\s+[A-ZƏa-zə][a-zəöüşçğıi]+)',
-        full_text, re.IGNORECASE
+        r'ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]{2,}\s+[A-ZƏa-zə][a-zəöüşçğıi]{2,})',
+        clean_text, re.IGNORECASE
     )
     if adim:
         name = re.sub(r'[dD][iıİI][rR]$', '', adim.group(1)).strip()
-        rest = full_text[full_text.find(adim.group(0)):full_text.find(adim.group(0))+30].lower()
-        if 'deyil' not in rest:
+        # "adım X deyil" deyilsə
+        pos = clean_text.find(adim.group(0))
+        rest = clean_text[pos:pos+40].lower()
+        if 'deyil' not in rest and len(name) > 3:
+            return name.title()
+    
+    # ═══════════════ Pattern 6: "adım Ad" (tək ad) ═══════════════
+    adim_tek = re.search(
+        r'ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]{2,})',
+        clean_text, re.IGNORECASE
+    )
+    if adim_tek:
+        name = re.sub(r'[dD][iıİI][rR]$', '', adim_tek.group(1)).strip()
+        pos = clean_text.find(adim_tek.group(0))
+        rest = clean_text[pos:pos+30].lower()
+        if 'deyil' not in rest and len(name) > 2:
             return name.title()
 
-    # Pattern 5: "müəllimi" / "müəllim" yanında Ad Soyad
+    # ═══════════════ Pattern 7: "Ad sinif müəllimi" ═══════════════
+    # "Yuniş İbtar sinif müəllimi" → "Yuniş İbtar"
     muellim = re.search(
-        r'([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+(?:sinif\s+)?m[uü][eə]llim',
-        full_text, re.IGNORECASE
+        r'([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s+([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s+(?:sinif\s+)?m[uü][eə]llim',
+        clean_text, re.IGNORECASE
     )
     if muellim:
-        # Addan əvvəlki sözü də yoxla
-        pos = full_text.find(muellim.group(0))
-        before = full_text[:pos].strip().split()[-1] if pos > 0 else ""
-        name = muellim.group(1)
-        if before and before[0].isupper() and len(before) > 2:
-            return f"{before.title()} {name.title()}"
-        return name.title()
+        w1 = re.sub(r'[.,;:!?]', '', muellim.group(1)).strip()
+        w2 = re.sub(r'[.,;:!?]', '', muellim.group(2)).strip()
+        stop = {'və', 'bu', 'da', 'bir', 'o', 'ki', 'dərs', 'sinif', 'salam', 'xeyir', 'səbəb', 'sonra', 'indi'}
+        if w1.lower() not in stop and w2.lower() not in stop and len(w1) > 2 and len(w2) > 2:
+            return f"{w1.title()} {w2.title()}"
 
-    # Pattern 6: İlk segmentlərdə iki böyük hərfli söz
+    # Tək ad + müəllim
+    muellim_tek = re.search(
+        r'([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+(?:sinif\s+)?m[uü][eə]llim',
+        clean_text, re.IGNORECASE
+    )
+    if muellim_tek:
+        name = re.sub(r'[.,;:!?]', '', muellim_tek.group(1)).strip()
+        stop = {'Və', 'Bu', 'Da', 'Bir', 'Dərs', 'Sinif', 'Salam', 'Xeyir', 'Səbəb', 'Sonra', 'İndi', 'Mənim'}
+        if name not in stop and len(name) > 2:
+            return name.title()
+
+    # ═══════════════ Pattern 8: İlk segmentlərdə Ad Soyad ═══════════════
     for seg in transcript_segments[:3]:
+        seg_clean = re.sub(r'[.,;:!?]', '', seg["text"])
         name_match = re.search(
             r'([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})',
-            seg["text"]
+            seg_clean
         )
         if name_match:
             w1, w2 = name_match.group(1), name_match.group(2)
-            stop = {'Salam','Xeyir','Sabah','Beli','Yaxsi','Bugun','Bize','Size','Ders','Sinif','Bilir','Olur','Edir','Gelir'}
+            stop = {'Salam','Xeyir','Sabah','Beli','Yaxsi','Bugun','Bize','Size','Ders',
+                     'Sinif','Bilir','Olur','Edir','Gelir','Mənim','Sizin','Bizim','Onun'}
             if w1 not in stop and w2 not in stop:
                 return f"{w1} {w2}"
 
