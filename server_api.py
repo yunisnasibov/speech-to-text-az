@@ -48,6 +48,31 @@ def extract_teacher_name(transcript_segments):
     
     print(f"Ad axtarışı mətni: {clean_text[:200]}")
 
+    # ═══════════════ ÖNCƏLİKLİ: "mən keçirəm/edirəm Ad Soyad" ═══════════════
+    # "mən keçirəm Yunis Nəsibov" — müəllimin özünü tanıtması ən güclü siqnaldır
+    men_verb = re.search(
+        r'm[eə]n\s+\w+\s+([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s*[.,]',
+        clean_text
+    )
+    if men_verb:
+        w1, w2 = men_verb.group(1), men_verb.group(2)
+        stop = {'Daha','Sonra','Indi','Burada','Sinif','Dərs','Onun','Bizim','Sizin'}
+        if w1 not in stop and w2 not in stop:
+            print(f"Pattern 'mən + feil + Ad Soyad': {w1} {w2}")
+            return f"{w1} {w2}"
+
+    # "mən keçirəm Yunis Nəsibov" — cümlə sonunda nöqtə ilə
+    men_verb_end = re.search(
+        r'm[eə]n\s+\w+\s+([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s*$',
+        clean_text
+    )
+    if men_verb_end:
+        w1, w2 = men_verb_end.group(1), men_verb_end.group(2)
+        stop = {'Daha','Sonra','Indi','Burada','Sinif','Dərs','Onun','Bizim','Sizin'}
+        if w1 not in stop and w2 not in stop:
+            print(f"Pattern 'mən + feil + Ad Soyad (cümlə sonu)': {w1} {w2}")
+            return f"{w1} {w2}"
+
     # ═══════════════ Pattern 1: "Soyad Ad, Ata-adı oğlu/qızı" ═══════════════
     # Məsələn: "Abbasov Rəhman, Mihman oğlu"
     oglu = re.search(
