@@ -4,6 +4,8 @@ os.environ["MKL_NUM_THREADS"] = "4"
 
 import torch
 torch.set_num_threads(4)
+import json
+from google import genai
 from fastapi import FastAPI, File, UploadFile, Header, HTTPException
 from pyannote.audio import Pipeline
 from faster_whisper import WhisperModel
@@ -16,6 +18,7 @@ app = FastAPI(title="STT and Diarization Server")
 # API KEY — bu açarı dəyişdirin və heç kimə verməyin!
 # ═══════════════════════════════════════════════════════
 API_KEY = os.getenv("STT_API_KEY", "stt-secret-key-2026")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Modelləri server işə düşəndə bir dəfə yaddaşa yükləyirik
 print("PyAnnote modeli yüklənir...")
@@ -33,6 +36,70 @@ whisper_model = WhisperModel(
     compute_type="float16" if torch.cuda.is_available() else "int8"
 )
 print("Bütün modellər hazırdır!")
+
+
+def gemini_correct_text(transcript_segments):
+    """Gemini API ilə Whisper-in səhv yazdığı sözləri düzəldir."""
+    if not GEMINI_API_KEY:
+        print("GEMINI_API_KEY yoxdur, düzəliş edilmir.")
+        return transcript_segments
+
+    full_text = "\n".join([
+        f"{seg['speaker']} ({seg['start']}s-{seg['end']}s): {seg['text']}"
+        for seg in transcript_segments
+    ])
+
+    prompt = f"""Bu Azərbaycan dilində sinif monitorinq videosunun transkripsiyasıdır.
+Whisper modeli bəzi sözləri, xüsusilə şəxs adlarını səhv yaza bilər.
+
+Sənin vəzifən:
+1. Səhv yazılmış Azərbaycan sözlərini düzəlt
+2. Şəxs adlarını və soyadlarını düzgün formaya gətir
+3. Qrammatik səhvləri düzəlt
+4. Mənasını dəyişmə, yalnız yazılışı düzəlt
+
+CAVABI YALNIZ JSON formatında qaytar, başqa heç nə yazma:
+{{
+  "corrected": [
+    {{"speaker": "...", "start": ..., "end": ..., "text": "düzəldilmiş mətn"}},
+    ...
+  ],
+  "teacher_name": "Müəllimin tam adı (əgər tapılarsa, yoxsa null)"
+}}
+
+Transkripsiya:
+{full_text}"""
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+        raw = response.text.strip()
+        print(f"Gemini cavabı: {raw[:300]}")
+
+        # JSON bloku tap (```json ... ``` və ya düz JSON)
+        if "```json" in raw:
+            raw = raw.split("```json")[1].split("```")[0].strip()
+        elif "```" in raw:
+            raw = raw.split("```")[1].split("```")[0].strip()
+
+        result = json.loads(raw)
+        corrected = result.get("corrected", [])
+        teacher_name = result.get("teacher_name")
+
+        if corrected and len(corrected) == len(transcript_segments):
+            # Düzəldilmiş mətnləri əvəzlə
+            for i, seg in enumerate(corrected):
+                transcript_segments[i]["text"] = seg.get("text", transcript_segments[i]["text"])
+            print("Gemini düzəlişləri tətbiq edildi.")
+        
+        return transcript_segments, teacher_name
+
+    except Exception as e:
+        print(f"Gemini xətası: {e}")
+        return transcript_segments, None
 
 
 @app.post("/transcribe")
@@ -99,7 +166,13 @@ async def transcribe_audio(
                     "text": speaker_text.strip()
                 })
 
-        return {"status": "success", "data": final_transcript}
+        # 4. Gemini ilə sözləri düzəlt
+        teacher_name = None
+        if GEMINI_API_KEY:
+            print("Gemini ilə düzəliş edilir...")
+            final_transcript, teacher_name = gemini_correct_text(final_transcript)
+
+        return {"status": "success", "data": final_transcript, "teacher_name": teacher_name}
 
     except Exception as e:
         import traceback

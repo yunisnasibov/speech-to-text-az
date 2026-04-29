@@ -57,6 +57,12 @@ if uploaded_file is not None:
                             st.markdown(line)
                             final_text += line + "\n\n"
                         
+                        # Müəllimin tam adını göstər (Gemini tərəfindən tapılır)
+                        teacher_name = result.get("teacher_name")
+                        if teacher_name:
+                            st.markdown("---")
+                            st.markdown(f"### 👩‍🏫 Müəllimin tam adı: **{teacher_name}**")
+                        
                         st.download_button("Nəticəni Yüklə", data=final_text, file_name="transkripsiya.txt")
                     else:
                         st.error(f"Server xətası: {result.get('message')}")
