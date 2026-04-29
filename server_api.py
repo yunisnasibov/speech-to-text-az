@@ -18,7 +18,7 @@ app = FastAPI(title="STT and Diarization Server")
 # API KEY — bu açarı dəyişdirin və heç kimə verməyin!
 # ═══════════════════════════════════════════════════════
 API_KEY = os.getenv("STT_API_KEY", "stt-secret-key-2026")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
 
 # Modelləri server işə düşəndə bir dəfə yaddaşa yükləyirik
 print("PyAnnote modeli yüklənir...")
@@ -38,10 +38,10 @@ whisper_model = WhisperModel(
 print("Bütün modellər hazırdır!")
 
 
-def gemini_correct_text(transcript_segments):
+def gemini_correct_text(transcript_segments, gemini_api_key):
     """Gemini API ilə Whisper-in səhv yazdığı sözləri düzəldir."""
-    if not GEMINI_API_KEY:
-        print("GEMINI_API_KEY yoxdur, düzəliş edilmir.")
+    if not gemini_api_key:
+        print("Gemini API açarı verilməyib, düzəliş edilmir.")
         return transcript_segments
 
     full_text = "\n".join([
@@ -71,7 +71,7 @@ Transkripsiya:
 {full_text}"""
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = genai.Client(api_key=gemini_api_key)
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt
@@ -105,7 +105,8 @@ Transkripsiya:
 @app.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
-    x_api_key: str = Header(None, alias="X-API-Key")
+    x_api_key: str = Header(None, alias="X-API-Key"),
+    x_gemini_key: str = Header(None, alias="X-Gemini-Key")
 ):
     # API key yoxlanışı
     if x_api_key != API_KEY:
@@ -168,9 +169,11 @@ async def transcribe_audio(
 
         # 4. Gemini ilə sözləri düzəlt
         teacher_name = None
-        if GEMINI_API_KEY:
+        if x_gemini_key:
             print("Gemini ilə düzəliş edilir...")
-            final_transcript, teacher_name = gemini_correct_text(final_transcript)
+            final_transcript, teacher_name = gemini_correct_text(final_transcript, x_gemini_key)
+        else:
+            print("Gemini açarı verilməyib, düzəliş edilmir.")
 
         return {"status": "success", "data": final_transcript, "teacher_name": teacher_name}
 
