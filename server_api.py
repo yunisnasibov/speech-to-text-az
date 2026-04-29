@@ -306,7 +306,7 @@ async def transcribe_audio(
             
             if speaker_text.strip():
                 final_transcript.append({
-                    "speaker": "Müfəttiş" if speaker_seg["speaker"] == "SPEAKER_00" else "Müəllim",
+                    "speaker": "Danışan 1" if speaker_seg["speaker"] == "SPEAKER_00" else "Danışan 2",
                     "start": round(speaker_seg["start"], 1),
                     "end": round(speaker_seg["end"], 1),
                     "text": speaker_text.strip()
