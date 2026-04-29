@@ -2,6 +2,7 @@ import os
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
 
+import re
 import torch
 torch.set_num_threads(4)
 import json
@@ -36,6 +37,81 @@ whisper_model = WhisperModel(
     compute_type="float16" if torch.cuda.is_available() else "int8"
 )
 print("Bütün modellər hazırdır!")
+
+
+def extract_teacher_name(transcript_segments):
+    """Regex ilə müəllimin adını tapır — API key tələb etmir."""
+    full_text = " ".join([seg["text"] for seg in transcript_segments])
+    
+    # Pattern 1: "Soyad Ad, Ata-adı oğlu/qızı"
+    oglu = re.search(
+        r'([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s+([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s*[,.]?\s*[A-ZƏÖÜŞÇĞİa-zəöüşçğıi]+\s+o[gğ]lu',
+        full_text, re.IGNORECASE
+    )
+    if oglu:
+        return f"{oglu.group(2).title()} {oglu.group(1).title()}"
+    
+    qizi = re.search(
+        r'([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s+([A-ZƏÖÜŞÇĞİa-zəöüşçğıi]{3,})\s*[,.]?\s*[A-ZƏÖÜŞÇĞİa-zəöüşçğıi]+\s+q[iıI]z[iıI]',
+        full_text, re.IGNORECASE
+    )
+    if qizi:
+        return f"{qizi.group(2).title()} {qizi.group(1).title()}"
+
+    # Pattern 2: "adım X deyil, adım Y"
+    deyil = re.search(
+        r'ad[iıIİ]m\s+.+?deyil.+?ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]+(?:\s+[A-ZƏa-zə][a-zəöüşçğıi]+))',
+        full_text, re.IGNORECASE
+    )
+    if deyil:
+        return re.sub(r'[dD][iıİI][rR]$', '', deyil.group(1)).strip().title()
+
+    # Pattern 3: "mən ... yam, Ad Soyad"
+    self_ref = re.search(
+        r'm[eə]n\s+.+?[yY][eəaı]m\s*[,.]\s*([A-ZƏa-zə][a-zəöüşçğıi]+\s+[A-ZƏa-zə][a-zəöüşçğıi]+)',
+        full_text, re.IGNORECASE
+    )
+    if self_ref:
+        return self_ref.group(1).strip().title()
+
+    # Pattern 4: "adım Ad Soyad"
+    adim = re.search(
+        r'ad[iıIİ]m\s+([A-ZƏa-zə][a-zəöüşçğıi]+\s+[A-ZƏa-zə][a-zəöüşçğıi]+)',
+        full_text, re.IGNORECASE
+    )
+    if adim:
+        name = re.sub(r'[dD][iıİI][rR]$', '', adim.group(1)).strip()
+        rest = full_text[full_text.find(adim.group(0)):full_text.find(adim.group(0))+30].lower()
+        if 'deyil' not in rest:
+            return name.title()
+
+    # Pattern 5: "müəllimi" / "müəllim" yanında Ad Soyad
+    muellim = re.search(
+        r'([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+(?:sinif\s+)?m[uü][eə]llim',
+        full_text, re.IGNORECASE
+    )
+    if muellim:
+        # Addan əvvəlki sözü də yoxla
+        pos = full_text.find(muellim.group(0))
+        before = full_text[:pos].strip().split()[-1] if pos > 0 else ""
+        name = muellim.group(1)
+        if before and before[0].isupper() and len(before) > 2:
+            return f"{before.title()} {name.title()}"
+        return name.title()
+
+    # Pattern 6: İlk segmentlərdə iki böyük hərfli söz
+    for seg in transcript_segments[:3]:
+        name_match = re.search(
+            r'([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})\s+([A-ZƏÖÜŞÇĞİ][a-zəöüşçğıi]{2,})',
+            seg["text"]
+        )
+        if name_match:
+            w1, w2 = name_match.group(1), name_match.group(2)
+            stop = {'Salam','Xeyir','Sabah','Beli','Yaxsi','Bugun','Bize','Size','Ders','Sinif','Bilir','Olur','Edir','Gelir'}
+            if w1 not in stop and w2 not in stop:
+                return f"{w1} {w2}"
+
+    return None
 
 
 def gemini_correct_text(transcript_segments, gemini_api_key):
@@ -167,13 +243,17 @@ async def transcribe_audio(
                     "text": speaker_text.strip()
                 })
 
-        # 4. Gemini ilə sözləri düzəlt
-        teacher_name = None
+        # 4. Müəllim adını regex ilə tap (həmişə işləyir)
+        teacher_name = extract_teacher_name(final_transcript)
+        print(f"Regex ilə tapılan ad: {teacher_name}")
+
+        # 5. Gemini ilə sözləri düzəlt + adı təkmilləşdir (yalnız API key varsa)
         if x_gemini_key:
             print("Gemini ilə düzəliş edilir...")
-            final_transcript, teacher_name = gemini_correct_text(final_transcript, x_gemini_key)
-        else:
-            print("Gemini açarı verilməyib, düzəliş edilmir.")
+            final_transcript, gemini_name = gemini_correct_text(final_transcript, x_gemini_key)
+            if gemini_name:
+                teacher_name = gemini_name  # Gemini daha dəqiq ad tapır
+                print(f"Gemini ilə düzəldilmiş ad: {teacher_name}")
 
         return {"status": "success", "data": final_transcript, "teacher_name": teacher_name}
 

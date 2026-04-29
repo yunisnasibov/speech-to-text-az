@@ -69,6 +69,8 @@ if uploaded_file is not None:
                         teacher_name = result.get("teacher_name")
                         if teacher_name:
                             st.markdown(f"## 👩‍🏫 Müəllim: **{teacher_name}**")
+                        else:
+                            st.warning("⚠️ Müəllimin adı transkripsiyada tapılmadı.")
                         
                         st.markdown("---")
                         st.markdown("### 📝 Transkripsiya")
